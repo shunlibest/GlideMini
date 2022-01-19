@@ -4,7 +4,7 @@ import android.os.Process;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.bumptech.glide.load.engine.EngineResource.ResourceListener;
 import com.bumptech.glide.util.Executors;
 import com.bumptech.glide.util.Preconditions;

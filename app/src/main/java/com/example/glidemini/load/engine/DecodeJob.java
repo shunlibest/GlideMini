@@ -9,7 +9,7 @@ import com.bumptech.glide.Priority;
 import com.bumptech.glide.Registry;
 import com.example.glidemini.load.DataSource;
 import com.example.glidemini.load.EncodeStrategy;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.example.glidemini.load.Options;
 import com.example.glidemini.load.ResourceEncoder;
 import com.example.glidemini.load.Transformation;

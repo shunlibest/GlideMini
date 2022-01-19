@@ -5,6 +5,8 @@ import androidx.annotation.Nullable;
 import androidx.collection.ArrayMap;
 import androidx.collection.SimpleArrayMap;
 import com.bumptech.glide.util.CachedHashCodeArrayMap;
+import com.example.glidemini.cache.key.Key;
+
 import java.security.MessageDigest;
 
 /** A set of {@link Option Options} to apply to in memory and disk cache keys. */

@@ -9,6 +9,10 @@ import android.os.Looper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.StringWriter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -244,6 +248,32 @@ public final class Util {
         }
         return a.equals(b);
     }
+
+    public static String readFully(Reader reader) throws IOException {
+        try {
+            StringWriter writer = new StringWriter();
+            char[] buffer = new char[1024];
+            int count;
+            while ((count = reader.read(buffer)) != -1) {
+                writer.write(buffer, 0, count);
+            }
+            return writer.toString();
+        } finally {
+            reader.close();
+        }
+    }
+
+    public static void closeQuietly(Closeable closeable) {
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (RuntimeException rethrown) {
+                throw rethrown;
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
 
     public static int hashCode(int value) {
         return hashCode(value, HASH_ACCUMULATOR);

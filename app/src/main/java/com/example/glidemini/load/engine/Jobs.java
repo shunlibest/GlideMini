@@ -1,7 +1,7 @@
 package com.example.glidemini.load.engine;
 
 import androidx.annotation.VisibleForTesting;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;

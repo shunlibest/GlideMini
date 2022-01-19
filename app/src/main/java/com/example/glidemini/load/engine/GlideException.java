@@ -4,7 +4,7 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.example.glidemini.load.DataSource;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.io.PrintWriter;

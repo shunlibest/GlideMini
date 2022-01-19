@@ -6,6 +6,8 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import com.bumptech.glide.Priority;
 import com.example.glidemini.load.DataSource;
+import com.example.glidemini.loader.model.DataFetcher;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 

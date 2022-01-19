@@ -24,76 +24,6 @@ import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 
-import com.bumptech.glide.GlideBuilder.EnableImageDecoderForBitmaps;
-import com.bumptech.glide.gifdecoder.GifDecoder;
-import com.bumptech.glide.load.DecodeFormat;
-import com.bumptech.glide.load.ImageHeaderParser;
-import com.bumptech.glide.load.ResourceDecoder;
-import com.bumptech.glide.load.data.InputStreamRewinder;
-import com.bumptech.glide.load.data.ParcelFileDescriptorRewinder;
-import com.bumptech.glide.load.engine.Engine;
-import com.bumptech.glide.load.engine.bitmap_recycle.ArrayPool;
-import com.bumptech.glide.load.engine.bitmap_recycle.BitmapPool;
-import com.bumptech.glide.load.engine.cache.MemoryCache;
-import com.bumptech.glide.load.engine.prefill.BitmapPreFiller;
-import com.bumptech.glide.load.engine.prefill.PreFillType;
-import com.bumptech.glide.load.engine.prefill.PreFillType.Builder;
-import com.bumptech.glide.load.model.AssetUriLoader;
-import com.bumptech.glide.load.model.ByteArrayLoader;
-import com.bumptech.glide.load.model.ByteBufferEncoder;
-import com.bumptech.glide.load.model.ByteBufferFileLoader;
-import com.bumptech.glide.load.model.DataUrlLoader;
-import com.bumptech.glide.load.model.FileLoader;
-import com.bumptech.glide.load.model.GlideUrl;
-import com.bumptech.glide.load.model.MediaStoreFileLoader;
-import com.bumptech.glide.load.model.ResourceLoader;
-import com.bumptech.glide.load.model.StreamEncoder;
-import com.bumptech.glide.load.model.StringLoader;
-import com.bumptech.glide.load.model.UnitModelLoader;
-import com.bumptech.glide.load.model.UriLoader;
-import com.bumptech.glide.load.model.UrlUriLoader;
-import com.bumptech.glide.load.model.stream.HttpGlideUrlLoader;
-import com.bumptech.glide.load.model.stream.MediaStoreImageThumbLoader;
-import com.bumptech.glide.load.model.stream.MediaStoreVideoThumbLoader;
-import com.bumptech.glide.load.model.stream.QMediaStoreUriLoader;
-import com.bumptech.glide.load.model.stream.UrlLoader;
-import com.bumptech.glide.load.resource.bitmap.BitmapDrawableDecoder;
-import com.bumptech.glide.load.resource.bitmap.BitmapDrawableEncoder;
-import com.bumptech.glide.load.resource.bitmap.BitmapEncoder;
-import com.bumptech.glide.load.resource.bitmap.ByteBufferBitmapDecoder;
-import com.bumptech.glide.load.resource.bitmap.ByteBufferBitmapImageDecoderResourceDecoder;
-import com.bumptech.glide.load.resource.bitmap.DefaultImageHeaderParser;
-import com.bumptech.glide.load.resource.bitmap.Downsampler;
-import com.bumptech.glide.load.resource.bitmap.ExifInterfaceImageHeaderParser;
-import com.bumptech.glide.load.resource.bitmap.HardwareConfigState;
-import com.bumptech.glide.load.resource.bitmap.InputStreamBitmapImageDecoderResourceDecoder;
-import com.bumptech.glide.load.resource.bitmap.ParcelFileDescriptorBitmapDecoder;
-import com.bumptech.glide.load.resource.bitmap.ResourceBitmapDecoder;
-import com.bumptech.glide.load.resource.bitmap.StreamBitmapDecoder;
-import com.bumptech.glide.load.resource.bitmap.UnitBitmapDecoder;
-import com.bumptech.glide.load.resource.bitmap.VideoDecoder;
-import com.bumptech.glide.load.resource.bytes.ByteBufferRewinder;
-import com.bumptech.glide.load.resource.drawable.ResourceDrawableDecoder;
-import com.bumptech.glide.load.resource.drawable.UnitDrawableDecoder;
-import com.bumptech.glide.load.resource.file.FileDecoder;
-import com.bumptech.glide.load.resource.gif.ByteBufferGifDecoder;
-import com.bumptech.glide.load.resource.gif.GifDrawable;
-import com.bumptech.glide.load.resource.gif.GifDrawableEncoder;
-import com.bumptech.glide.load.resource.gif.GifFrameResourceDecoder;
-import com.bumptech.glide.load.resource.gif.StreamGifDecoder;
-import com.bumptech.glide.load.resource.transcode.BitmapBytesTranscoder;
-import com.bumptech.glide.load.resource.transcode.BitmapDrawableTranscoder;
-import com.bumptech.glide.load.resource.transcode.DrawableBytesTranscoder;
-import com.bumptech.glide.load.resource.transcode.GifDrawableBytesTranscoder;
-import com.bumptech.glide.manager.ConnectivityMonitorFactory;
-import com.bumptech.glide.manager.RequestManagerRetriever;
-import com.bumptech.glide.module.ManifestParser;
-import com.bumptech.glide.request.RequestListener;
-import com.bumptech.glide.request.RequestOptions;
-import com.bumptech.glide.request.target.ImageViewTargetFactory;
-import com.bumptech.glide.request.target.Target;
-import com.bumptech.glide.util.Preconditions;
-import com.bumptech.glide.util.Util;
 
 import java.io.File;
 import java.io.InputStream;
@@ -107,11 +37,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * A singleton to present a simple static interface for building requests with {@link
- * RequestBuilder} and maintaining an {@link Engine}, {@link BitmapPool}, {@link
- * com.bumptech.glide.load.engine.cache.DiskCache} and {@link MemoryCache}.
- */
+import com.example.glidemini.cache.memoryCache.MemoryCache;
+import com.example.glidemini.load.engine.Engine;
+
+
 public class Glide implements ComponentCallbacks2 {
     private static final String DEFAULT_DISK_CACHE_DIR = "image_manager_disk_cache";
     private static final String TAG = "Glide";

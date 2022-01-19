@@ -1,8 +1,7 @@
 package com.example.glidemini.load.model.stream;
 
 import android.net.Uri;
-import com.example.glidemini.load.model.GlideUrl;
-import com.example.glidemini.load.model.ModelLoader;
+import com.example.glidemini.cache.key.GlideUrl;
 import com.example.glidemini.load.model.UrlUriLoader;
 import java.io.InputStream;
 

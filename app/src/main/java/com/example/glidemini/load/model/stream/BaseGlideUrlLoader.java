@@ -3,12 +3,12 @@ package com.example.glidemini.load.model.stream;
 import android.text.TextUtils;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.example.glidemini.load.Options;
-import com.example.glidemini.load.model.GlideUrl;
-import com.example.glidemini.load.model.Headers;
+import com.example.glidemini.cache.key.GlideUrl;
+import com.example.glidemini.load.model.header.Headers;
 import com.example.glidemini.load.model.ModelCache;
-import com.example.glidemini.load.model.ModelLoader;
+
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;

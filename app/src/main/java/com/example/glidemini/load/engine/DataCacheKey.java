@@ -1,7 +1,7 @@
 package com.example.glidemini.load.engine;
 
 import androidx.annotation.NonNull;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import java.security.MessageDigest;
 
 /** A cache key for original source data + any requested signature. */

@@ -5,7 +5,7 @@ import androidx.annotation.Nullable;
 import androidx.core.util.Pools.Pool;
 import com.bumptech.glide.Priority;
 import com.example.glidemini.load.DataSource;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.example.glidemini.load.Options;
 import com.bumptech.glide.load.data.DataFetcher;
 import com.bumptech.glide.load.data.DataFetcher.DataCallback;

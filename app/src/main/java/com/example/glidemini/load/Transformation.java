@@ -3,6 +3,8 @@ package com.example.glidemini.load;
 import android.content.Context;
 import androidx.annotation.NonNull;
 import com.bumptech.glide.load.engine.Resource;
+import com.example.glidemini.cache.key.Key;
+
 import java.nio.charset.Charset;
 import java.security.MessageDigest;
 

@@ -2,7 +2,7 @@ package com.example.glidemini.load.engine;
 
 import androidx.annotation.Nullable;
 import com.example.glidemini.load.DataSource;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.bumptech.glide.load.data.DataFetcher;
 
 /**

@@ -3,6 +3,8 @@ package com.example.glidemini.load;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.bumptech.glide.util.Preconditions;
+import com.example.glidemini.cache.key.Key;
+
 import java.security.MessageDigest;
 
 /**

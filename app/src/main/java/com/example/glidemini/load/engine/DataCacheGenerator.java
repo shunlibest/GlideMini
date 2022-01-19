@@ -2,7 +2,7 @@ package com.example.glidemini.load.engine;
 
 import androidx.annotation.NonNull;
 import com.example.glidemini.load.DataSource;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.bumptech.glide.load.data.DataFetcher;
 import com.bumptech.glide.load.model.ModelLoader;
 import com.bumptech.glide.load.model.ModelLoader.LoadData;

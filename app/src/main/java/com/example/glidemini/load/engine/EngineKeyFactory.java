@@ -1,6 +1,6 @@
 package com.example.glidemini.load.engine;
 
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.example.glidemini.load.Options;
 import com.example.glidemini.load.Transformation;
 import java.util.Map;

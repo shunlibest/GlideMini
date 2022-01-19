@@ -2,6 +2,8 @@ package com.example.glidemini.load.model;
 
 import android.net.Uri;
 import androidx.annotation.NonNull;
+
+import com.example.glidemini.cache.key.GlideUrl;
 import com.example.glidemini.load.Options;
 import java.io.InputStream;
 import java.util.Arrays;

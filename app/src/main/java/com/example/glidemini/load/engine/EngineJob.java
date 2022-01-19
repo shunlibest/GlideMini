@@ -5,7 +5,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.util.Pools;
 import com.example.glidemini.load.DataSource;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.example.glidemini.load.engine.EngineResource.ResourceListener;
 import com.bumptech.glide.load.engine.executor.GlideExecutor;
 import com.bumptech.glide.request.ResourceCallback;

@@ -1,7 +1,7 @@
 package com.example.glidemini.load.engine;
 
 import androidx.annotation.NonNull;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.bumptech.glide.util.Preconditions;
 
 /**

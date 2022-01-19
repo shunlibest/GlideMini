@@ -8,7 +8,7 @@ import androidx.core.util.Pools;
 import com.bumptech.glide.GlideContext;
 import com.bumptech.glide.Priority;
 import com.example.glidemini.load.DataSource;
-import com.example.glidemini.load.Key;
+import com.example.glidemini.cache.key.Key;
 import com.example.glidemini.load.Options;
 import com.example.glidemini.load.Transformation;
 import com.example.glidemini.load.engine.EngineResource.ResourceListener;

@@ -2,8 +2,7 @@ package com.example.glidemini.load.model.stream;
 
 import androidx.annotation.NonNull;
 import com.example.glidemini.load.Options;
-import com.example.glidemini.load.model.GlideUrl;
-import com.example.glidemini.load.model.ModelLoader;
+import com.example.glidemini.cache.key.GlideUrl;
 import com.example.glidemini.load.model.ModelLoaderFactory;
 import com.example.glidemini.load.model.MultiModelLoaderFactory;
 import java.io.InputStream;
