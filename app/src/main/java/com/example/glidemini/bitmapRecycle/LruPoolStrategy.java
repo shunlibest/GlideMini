@@ -1,9 +1,9 @@
-package com.example.glidemini.bitmap_recycle;
+package com.example.glidemini.bitmapRecycle;
 
 import android.graphics.Bitmap;
 import androidx.annotation.Nullable;
 
-interface LruPoolStrategy {
+public interface LruPoolStrategy {
   void put(Bitmap bitmap);
 
   @Nullable

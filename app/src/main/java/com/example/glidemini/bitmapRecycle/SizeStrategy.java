@@ -1,4 +1,4 @@
-package com.example.glidemini.bitmap_recycle;
+package com.example.glidemini.bitmapRecycle;
 
 import android.graphics.Bitmap;
 import android.os.Build;

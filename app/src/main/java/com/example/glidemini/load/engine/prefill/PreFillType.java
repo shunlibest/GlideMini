@@ -4,7 +4,7 @@ import android.graphics.Bitmap;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import com.bumptech.glide.util.Preconditions;
-import com.example.glidemini.bitmap_recycle.BitmapPool;
+import com.example.glidemini.bitmapRecycle.BitmapPool;
 
 /**
  * A container for a put of options used to pre-fill a {@link

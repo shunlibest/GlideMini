@@ -1,4 +1,4 @@
-package com.example.glidemini.bitmap_recycle;
+package com.example.glidemini.bitmapRecycle;
 
 /** Interface for an array pool that pools arrays of different types. */
 public interface ArrayPool {

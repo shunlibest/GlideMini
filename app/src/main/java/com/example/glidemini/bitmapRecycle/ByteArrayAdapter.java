@@ -1,4 +1,4 @@
-package com.example.glidemini.bitmap_recycle;
+package com.example.glidemini.bitmapRecycle;
 
 /** Adapter for handling primitive byte arrays. */
 @SuppressWarnings("PMD.UseVarargs")

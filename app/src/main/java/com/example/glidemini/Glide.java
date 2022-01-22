@@ -37,6 +37,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.example.glidemini.bitmapRecycle.BitmapPool;
+import com.example.glidemini.bitmapRecycle.BitmapPoolAdapter;
+import com.example.glidemini.bitmapRecycle.LruBitmapPool;
+import com.example.glidemini.cache.memoryCache.LruResourceCache;
 import com.example.glidemini.cache.memoryCache.MemoryCache;
 import com.example.glidemini.load.engine.Engine;
 
@@ -51,8 +55,18 @@ public class Glide implements ComponentCallbacks2 {
     private static volatile boolean isInitializing;
 
     private final Engine engine;
-    private final BitmapPool bitmapPool;
-    private final MemoryCache memoryCache;
+    //BitmapPool 一共有两种实现 BitmapPoolAdapter 和 LruBitmapPool
+    //其中, BitmapPoolAdapter 是空实现,因为在3.0以前 Bitmap 的数据是存在 native 区域，
+    // 3.0以后存在 Dalvik 内存区域， API11 后 系统提供了 Bitmap 复用的 API
+    //https://developer.android.com/topic/performance/graphics/manage-memory.html
+    //在Android O+位图是本地分配的，ART在管理垃圾方面效率更高，我们严重依赖硬件位图，使得位图重用变得不那么重要。
+    // 我们倾向于在这些设备上保留RAM，并在加载非常小的图像或生成缩略图时不重用位图和纹理，从而降低性能
+//    private final BitmapPool bitmapPool = new BitmapPoolAdapter();
+    //LRU会存储4个或1个屏幕分辨率的内存大小
+    private final BitmapPool bitmapPool = new LruBitmapPool(4 * (1920 * 1080 * 4));
+
+
+    private final MemoryCache memoryCache = new LruResourceCache(4 * 1024 * 1024);
     private final GlideContext glideContext;
     private final Registry registry;
     private final ArrayPool arrayPool;

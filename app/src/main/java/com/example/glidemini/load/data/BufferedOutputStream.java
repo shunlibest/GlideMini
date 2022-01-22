@@ -2,7 +2,7 @@ package com.example.glidemini.load.data;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
-import com.example.glidemini.bitmap_recycle.ArrayPool;
+import com.example.glidemini.bitmapRecycle.ArrayPool;
 import java.io.IOException;
 import java.io.OutputStream;
 

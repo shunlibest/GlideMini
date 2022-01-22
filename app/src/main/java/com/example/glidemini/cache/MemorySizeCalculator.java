@@ -10,8 +10,8 @@ import android.util.Log;
 import androidx.annotation.VisibleForTesting;
 import com.bumptech.glide.util.Preconditions;
 import com.bumptech.glide.util.Synthetic;
-import com.example.glidemini.bitmap_recycle.ArrayPool;
-import com.example.glidemini.bitmap_recycle.BitmapPool;
+import com.example.glidemini.bitmapRecycle.ArrayPool;
+import com.example.glidemini.bitmapRecycle.BitmapPool;
 
 /**
  * A calculator that tries to intelligently determine cache sizes for a given device based on some

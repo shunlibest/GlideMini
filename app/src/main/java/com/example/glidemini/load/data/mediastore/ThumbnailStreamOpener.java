@@ -9,7 +9,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.example.glidemini.load.ImageHeaderParser;
 import com.example.glidemini.load.ImageHeaderParserUtils;
-import com.example.glidemini.bitmap_recycle.ArrayPool;
+import com.example.glidemini.bitmapRecycle.ArrayPool;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;

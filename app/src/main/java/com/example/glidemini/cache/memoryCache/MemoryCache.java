@@ -2,67 +2,42 @@ package com.example.glidemini.cache.memoryCache;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+
 import com.example.glidemini.cache.key.Key;
-import com.example.glidemini.load.engine.EngineResource;
 import com.example.glidemini.load.engine.Resource;
 
-/** An interface for adding and removing resources from an in memory cache. */
+//内存缓存
 public interface MemoryCache {
-  /** An interface that will be called whenever a bitmap is removed from the cache. */
-  interface ResourceRemovedListener {
-    void onResourceRemoved(@NonNull Resource<?> removed);
-  }
 
-  /** Returns the sum of the sizes of all the contents of the cache in bytes. */
-  long getCurrentSize();
+    //返回缓存中所有内容的大小之和，以字节为单位。
+    long getCurrentSize();
 
-  /** Returns the current maximum size in bytes of the cache. */
-  long getMaxSize();
+    //返回当前缓存的允许的最大字节数
+    long getMaxSize();
 
-  /**
-   * Adjust the maximum size of the cache by multiplying the original size of the cache by the given
-   * multiplier.
-   *
-   * <p>If the size multiplier causes the size of the cache to be decreased, items will be evicted
-   * until the cache is smaller than the new size.
-   *
-   * @param multiplier A size multiplier >= 0.
-   */
-  void setSizeMultiplier(float multiplier);
+    // 改变最大缓存字节数的大小, 如果<1, 则可能会移除缓存数据
+    void setSizeMultiplier(float multiplier);
 
-  /**
-   * Removes the value for the given key and returns it if present or null otherwise.
-   *
-   * @param key The key.
-   */
-  @Nullable
-  Resource<?> remove(@NonNull Key key);
+    //移除某一缓存值
+    @Nullable
+    Resource<?> remove(@NonNull Key key);
 
-  /**
-   * Add bitmap to the cache with the given key.
-   *
-   * @param key The key to retrieve the bitmap.
-   * @param resource The {@link EngineResource} to store.
-   * @return The old value of key (null if key is not in map).
-   */
-  @Nullable
-  Resource<?> put(@NonNull Key key, @Nullable Resource<?> resource);
+    //根据key, 放入缓存资源; key的旧值不为空, 则返回旧值
+    @Nullable
+    Resource<?> put(@NonNull Key key, @Nullable Resource<?> resource);
 
-  /**
-   * Set the listener to be called when a bitmap is removed from the cache.
-   *
-   * @param listener The listener.
-   */
-  void setResourceRemovedListener(@NonNull ResourceRemovedListener listener);
+    //添加资源移除的监听器
+    void setResourceRemovedListener(@NonNull ResourceRemovedListener listener);
 
-  /** Evict all items from the memory cache. */
-  void clearMemory();
+    //清空所有缓存
+    void clearMemory();
 
-  /**
-   * Trim the memory cache to the appropriate level. Typically called on the callback onTrimMemory.
-   *
-   * @param level This integer represents a trim level as specified in {@link
-   *     android.content.ComponentCallbacks2}.
-   */
-  void trimMemory(int level);
+    //将内存缓存修剪到适当的级别
+    void trimMemory(int level);
+
+    //资源移除的回调
+    interface ResourceRemovedListener {
+        void onResourceRemoved(@NonNull Resource<?> removed);
+    }
+
 }

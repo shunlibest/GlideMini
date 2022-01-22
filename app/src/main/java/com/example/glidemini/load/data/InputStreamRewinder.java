@@ -1,7 +1,7 @@
 package com.example.glidemini.load.data;
 
 import androidx.annotation.NonNull;
-import com.example.glidemini.bitmap_recycle.ArrayPool;
+import com.example.glidemini.bitmapRecycle.ArrayPool;
 import com.example.glidemini.load.resource.bitmap.RecyclableBufferedInputStream;
 import com.bumptech.glide.util.Synthetic;
 import java.io.IOException;

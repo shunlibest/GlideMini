@@ -8,7 +8,7 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import com.example.glidemini.cache.key.Key;
-import com.example.glidemini.bitmap_recycle.BitmapPool;
+import com.example.glidemini.bitmapRecycle.BitmapPool;
 import com.bumptech.glide.load.engine.cache.MemoryCache;
 import com.example.glidemini.load.resource.bitmap.BitmapResource;
 import com.bumptech.glide.util.Synthetic;

@@ -47,13 +47,8 @@ public class LruCache<T, Y> {
         return cache.size();
     }
 
-    /**
-     * A callback called whenever an item is evicted from the cache. Subclasses can override.
-     *
-     * @param key  The key of the evicted item.
-     * @param item The evicted item.
-     */
-    protected void onItemEvicted(@NonNull T key, @Nullable Y item) {
+    //缓存数据被移除, 触发回调
+    protected void onItemEvicted(@NonNull T key, @NonNull Y item) {
         // optional override
     }
 

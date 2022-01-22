@@ -4,7 +4,7 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import com.example.glidemini.load.Encoder;
 import com.example.glidemini.load.Options;
-import com.example.glidemini.bitmap_recycle.ArrayPool;
+import com.example.glidemini.bitmapRecycle.ArrayPool;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;

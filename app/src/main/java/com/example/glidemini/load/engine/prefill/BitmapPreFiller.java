@@ -3,7 +3,7 @@ package com.example.glidemini.load.engine.prefill;
 import android.graphics.Bitmap;
 import androidx.annotation.VisibleForTesting;
 import com.example.glidemini.load.DecodeFormat;
-import com.example.glidemini.bitmap_recycle.BitmapPool;
+import com.example.glidemini.bitmapRecycle.BitmapPool;
 import com.bumptech.glide.load.engine.cache.MemoryCache;
 import com.bumptech.glide.util.Util;
 import java.util.HashMap;

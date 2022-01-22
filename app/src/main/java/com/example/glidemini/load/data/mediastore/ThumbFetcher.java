@@ -13,7 +13,7 @@ import com.bumptech.glide.Priority;
 import com.example.glidemini.load.DataSource;
 import com.example.glidemini.loader.model.DataFetcher;
 import com.example.glidemini.load.data.ExifOrientationStream;
-import com.example.glidemini.bitmap_recycle.ArrayPool;
+import com.example.glidemini.bitmapRecycle.ArrayPool;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
