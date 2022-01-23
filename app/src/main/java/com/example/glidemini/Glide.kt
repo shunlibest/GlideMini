@@ -1,899 +1,484 @@
-package com.example.glidemini;
+package com.example.glidemini
 
-import android.app.Activity;
-import android.content.ComponentCallbacks2;
-import android.content.ContentResolver;
-import android.content.Context;
-import android.content.res.AssetFileDescriptor;
-import android.content.res.Configuration;
-import android.content.res.Resources;
-import android.graphics.Bitmap;
-import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.Drawable;
-import android.net.Uri;
-import android.os.Build;
-import android.os.MessageQueue.IdleHandler;
-import android.os.ParcelFileDescriptor;
-import android.util.Log;
-import android.view.View;
+import com.example.glidemini.withManager.RequestManagerRetriever
+import com.example.glidemini.Glide.RequestOptionsFactory
+import android.content.ComponentCallbacks2
+import com.example.glidemini.bitmapRecycle.BitmapPool
+import com.example.glidemini.bitmapRecycle.LruBitmapPool
+import com.example.glidemini.cache.memoryCache.LruResourceCache
+import com.example.glidemini.bitmapRecycle.ArrayPool
+import com.example.glidemini.bitmapRecycle.LruArrayPool
+import com.example.glidemini.withManager.RequestManager
+import kotlin.jvm.Synchronized
+import kotlin.jvm.Volatile
+import com.example.glidemini.Glide
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.graphics.Bitmap
+import ResourceLoader.UriFactory
+import android.content.ContentResolver
+import android.content.Context
+import android.content.res.AssetFileDescriptor
+import android.content.res.Configuration
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.net.Uri
+import androidx.annotation.GuardedBy
+import androidx.annotation.RequiresApi
+import com.example.glidemini.cache.memoryCache.MemoryCache
+import com.example.glidemini.load.engine.Engine
+import java.io.File
+import java.io.InputStream
+import java.net.URL
+import java.nio.ByteBuffer
+import java.util.ArrayList
 
-import androidx.annotation.GuardedBy;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.annotation.VisibleForTesting;
-import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentActivity;
+@RequiresApi(Build.VERSION_CODES.KITKAT)
+class Glide private constructor(
+    context: Context,
+    private val engine: Engine,
+    /**
+     * Internal method.
+     */
 
-
-import java.io.File;
-import java.io.InputStream;
-import java.lang.reflect.InvocationTargetException;
-import java.net.URL;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import com.example.glidemini.bitmapRecycle.BitmapPool;
-import com.example.glidemini.bitmapRecycle.BitmapPoolAdapter;
-import com.example.glidemini.bitmapRecycle.LruBitmapPool;
-import com.example.glidemini.cache.memoryCache.LruResourceCache;
-import com.example.glidemini.cache.memoryCache.MemoryCache;
-import com.example.glidemini.load.engine.Engine;
-
-
-public class Glide implements ComponentCallbacks2 {
-    private static final String DEFAULT_DISK_CACHE_DIR = "image_manager_disk_cache";
-    private static final String TAG = "Glide";
-
-    @GuardedBy("Glide.class")
-    private static volatile Glide glide;
-
-    private static volatile boolean isInitializing;
-
-    private final Engine engine;
+    connectivityMonitorFactory: ConnectivityMonitorFactory,
+    logLevel: Int,
+    defaultRequestOptionsFactory: RequestOptionsFactory,
+    defaultTransitionOptions: Map<Class<*>, TransitionOptions<*, *>>,
+    defaultRequestListeners: List<RequestListener<Any>>,
+    experiments: GlideExperiments
+) : ComponentCallbacks2 {
     //BitmapPool 一共有两种实现 BitmapPoolAdapter 和 LruBitmapPool
     //其中, BitmapPoolAdapter 是空实现,因为在3.0以前 Bitmap 的数据是存在 native 区域，
     // 3.0以后存在 Dalvik 内存区域， API11 后 系统提供了 Bitmap 复用的 API
     //https://developer.android.com/topic/performance/graphics/manage-memory.html
     //在Android O+位图是本地分配的，ART在管理垃圾方面效率更高，我们严重依赖硬件位图，使得位图重用变得不那么重要。
     // 我们倾向于在这些设备上保留RAM，并在加载非常小的图像或生成缩略图时不重用位图和纹理，从而降低性能
-//    private final BitmapPool bitmapPool = new BitmapPoolAdapter();
+    //    private final BitmapPool bitmapPool = new BitmapPoolAdapter();
     //LRU会存储4个或1个屏幕分辨率的内存大小
-    private final BitmapPool bitmapPool = new LruBitmapPool(4 * (1920 * 1080 * 4));
+    private val bitmapPool: BitmapPool = LruBitmapPool(4 * (1920 * 1080 * 4))
+    private val memoryCache: MemoryCache = LruResourceCache(4 * 1024 * 1024)
+    private val glideContext: GlideContext
+    private val registry: Registry
 
+    //默认4M,低端机2M
+    private val arrayPool: ArrayPool = LruArrayPool(4 * 1024 * 1024)
+    private val connectivityMonitorFactory: ConnectivityMonitorFactory
 
-    private final MemoryCache memoryCache = new LruResourceCache(4 * 1024 * 1024);
-    private final GlideContext glideContext;
-    private final Registry registry;
-    private final ArrayPool arrayPool;
-    private final RequestManagerRetriever requestManagerRetriever;
-    private final ConnectivityMonitorFactory connectivityMonitorFactory;
+    private val requestManagerRetriever: RequestManagerRetriever = RequestManagerRetriever()
 
     @GuardedBy("managers")
-    private final List<RequestManager> managers = new ArrayList<>();
-
-    private final RequestOptionsFactory defaultRequestOptionsFactory;
-    private MemoryCategory memoryCategory = MemoryCategory.NORMAL;
+    private val managers: MutableList<RequestManager> = ArrayList()
+    private val defaultRequestOptionsFactory: RequestOptionsFactory
+    private val memoryCategory: MemoryCategory = MemoryCategory.NORMAL
 
     @GuardedBy("this")
-    @Nullable
-    private BitmapPreFiller bitmapPreFiller;
+    private var bitmapPreFiller: BitmapPreFiller? = null
 
     /**
-     * Returns a directory with a default name in the private cache directory of the application to
-     * use to store retrieved media and thumbnails.
+     * Pre-fills the [BitmapPool] using the given sizes.
      *
-     * @param context A context.
-     * @see #getPhotoCacheDir(android.content.Context, String)
-     */
-    @Nullable
-    public static File getPhotoCacheDir(@NonNull Context context) {
-        return getPhotoCacheDir(context, DEFAULT_DISK_CACHE_DIR);
-    }
-
-    /**
-     * Returns a directory with the given name in the private cache directory of the application to
-     * use to store retrieved media and thumbnails.
      *
-     * @param context   A context.
-     * @param cacheName The name of the subdirectory in which to store the cache.
-     * @see #getPhotoCacheDir(android.content.Context)
-     */
-    @Nullable
-    public static File getPhotoCacheDir(@NonNull Context context, @NonNull String cacheName) {
-        File cacheDir = context.getCacheDir();
-        if (cacheDir != null) {
-            File result = new File(cacheDir, cacheName);
-            if (result.isDirectory() || result.mkdirs()) {
-                return result;
-            }
-            // File wasn't able to create a directory, or the result exists but not a directory
-            return null;
-        }
-        if (Log.isLoggable(TAG, Log.ERROR)) {
-            Log.e(TAG, "default disk cache dir is null");
-        }
-        return null;
-    }
-
-    /**
-     * Get the singleton.
-     *
-     * @return the singleton
-     */
-    @NonNull
-    // Double checked locking is safe here.
-    @SuppressWarnings("GuardedBy")
-    public static Glide get(@NonNull Context context) {
-        if (glide == null) {
-            GeneratedAppGlideModule annotationGeneratedModule =
-                    getAnnotationGeneratedGlideModules(context.getApplicationContext());
-            synchronized (Glide.class) {
-                if (glide == null) {
-                    checkAndInitializeGlide(context, annotationGeneratedModule);
-                }
-            }
-        }
-
-        return glide;
-    }
-
-    @GuardedBy("Glide.class")
-    private static void checkAndInitializeGlide(
-            @NonNull Context context, @Nullable GeneratedAppGlideModule generatedAppGlideModule) {
-        // In the thread running initGlide(), one or more classes may call Glide.get(context).
-        // Without this check, those calls could trigger infinite recursion.
-        if (isInitializing) {
-            throw new IllegalStateException(
-                    "You cannot call Glide.get() in registerComponents(),"
-                            + " use the provided Glide instance instead");
-        }
-        isInitializing = true;
-        initializeGlide(context, generatedAppGlideModule);
-        isInitializing = false;
-    }
-
-    /**
-     * @deprecated Use {@link #init(Context, GlideBuilder)} to get a singleton compatible with Glide's
-     * generated API.
-     * <p>This method will be removed in a future version of Glide.
-     */
-    @VisibleForTesting
-    @Deprecated
-    public static synchronized void init(Glide glide) {
-        if (Glide.glide != null) {
-            tearDown();
-        }
-        Glide.glide = glide;
-    }
-
-    @VisibleForTesting
-    public static void init(@NonNull Context context, @NonNull GlideBuilder builder) {
-        GeneratedAppGlideModule annotationGeneratedModule = getAnnotationGeneratedGlideModules(context);
-        synchronized (Glide.class) {
-            if (Glide.glide != null) {
-                tearDown();
-            }
-            initializeGlide(context, builder, annotationGeneratedModule);
-        }
-    }
-
-    /**
-     * Allows hardware Bitmaps to be used prior to the first frame in the app being drawn as soon as
-     * this method is called.
-     *
-     * <p>If you use this method in non-test code, your app will experience native crashes on some
-     * versions of Android if you try to decode a hardware Bitmap. This method is only useful for
-     * testing.
-     */
-    @VisibleForTesting
-    public static void enableHardwareBitmaps() {
-        HardwareConfigState.getInstance().unblockHardwareBitmaps();
-    }
-
-    @VisibleForTesting
-    public static void tearDown() {
-        synchronized (Glide.class) {
-            if (glide != null) {
-                glide.getContext().getApplicationContext().unregisterComponentCallbacks(glide);
-                glide.engine.shutdown();
-            }
-            glide = null;
-        }
-    }
-
-    @GuardedBy("Glide.class")
-    private static void initializeGlide(
-            @NonNull Context context, @Nullable GeneratedAppGlideModule generatedAppGlideModule) {
-        initializeGlide(context, new GlideBuilder(), generatedAppGlideModule);
-    }
-
-    @GuardedBy("Glide.class")
-    @SuppressWarnings("deprecation")
-    private static void initializeGlide(
-            @NonNull Context context,
-            @NonNull GlideBuilder builder,
-            @Nullable GeneratedAppGlideModule annotationGeneratedModule) {
-        Context applicationContext = context.getApplicationContext();
-        List<com.bumptech.glide.module.GlideModule> manifestModules = Collections.emptyList();
-        if (annotationGeneratedModule == null || annotationGeneratedModule.isManifestParsingEnabled()) {
-            manifestModules = new ManifestParser(applicationContext).parse();
-        }
-
-        if (annotationGeneratedModule != null
-                && !annotationGeneratedModule.getExcludedModuleClasses().isEmpty()) {
-            Set<Class<?>> excludedModuleClasses = annotationGeneratedModule.getExcludedModuleClasses();
-            Iterator<com.bumptech.glide.module.GlideModule> iterator = manifestModules.iterator();
-            while (iterator.hasNext()) {
-                com.bumptech.glide.module.GlideModule current = iterator.next();
-                if (!excludedModuleClasses.contains(current.getClass())) {
-                    continue;
-                }
-                if (Log.isLoggable(TAG, Log.DEBUG)) {
-                    Log.d(TAG, "AppGlideModule excludes manifest GlideModule: " + current);
-                }
-                iterator.remove();
-            }
-        }
-
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
-            for (com.bumptech.glide.module.GlideModule glideModule : manifestModules) {
-                Log.d(TAG, "Discovered GlideModule from manifest: " + glideModule.getClass());
-            }
-        }
-
-        RequestManagerRetriever.RequestManagerFactory factory =
-                annotationGeneratedModule != null
-                        ? annotationGeneratedModule.getRequestManagerFactory()
-                        : null;
-        builder.setRequestManagerFactory(factory);
-        for (com.bumptech.glide.module.GlideModule module : manifestModules) {
-            module.applyOptions(applicationContext, builder);
-        }
-        if (annotationGeneratedModule != null) {
-            annotationGeneratedModule.applyOptions(applicationContext, builder);
-        }
-        Glide glide = builder.build(applicationContext);
-        for (com.bumptech.glide.module.GlideModule module : manifestModules) {
-            try {
-                module.registerComponents(applicationContext, glide, glide.registry);
-            } catch (AbstractMethodError e) {
-                throw new IllegalStateException(
-                        "Attempting to register a Glide v3 module. If you see this, you or one of your"
-                                + " dependencies may be including Glide v3 even though you're using Glide v4."
-                                + " You'll need to find and remove (or update) the offending dependency."
-                                + " The v3 module name is: "
-                                + module.getClass().getName(),
-                        e);
-            }
-        }
-        if (annotationGeneratedModule != null) {
-            annotationGeneratedModule.registerComponents(applicationContext, glide, glide.registry);
-        }
-        applicationContext.registerComponentCallbacks(glide);
-        Glide.glide = glide;
-    }
-
-    @Nullable
-    @SuppressWarnings({"unchecked", "TryWithIdenticalCatches", "PMD.UnusedFormalParameter"})
-    private static GeneratedAppGlideModule getAnnotationGeneratedGlideModules(Context context) {
-        GeneratedAppGlideModule result = null;
-        try {
-            Class<GeneratedAppGlideModule> clazz =
-                    (Class<GeneratedAppGlideModule>)
-                            Class.forName("com.bumptech.glide.GeneratedAppGlideModuleImpl");
-            result =
-                    clazz.getDeclaredConstructor(Context.class).newInstance(context.getApplicationContext());
-        } catch (ClassNotFoundException e) {
-            if (Log.isLoggable(TAG, Log.WARN)) {
-                Log.w(
-                        TAG,
-                        "Failed to find GeneratedAppGlideModule. You should include an"
-                                + " annotationProcessor compile dependency on com.github.bumptech.glide:compiler"
-                                + " in your application and a @GlideModule annotated AppGlideModule implementation"
-                                + " or LibraryGlideModules will be silently ignored");
-            }
-            // These exceptions can't be squashed across all versions of Android.
-        } catch (InstantiationException e) {
-            throwIncorrectGlideModule(e);
-        } catch (IllegalAccessException e) {
-            throwIncorrectGlideModule(e);
-        } catch (NoSuchMethodException e) {
-            throwIncorrectGlideModule(e);
-        } catch (InvocationTargetException e) {
-            throwIncorrectGlideModule(e);
-        }
-        return result;
-    }
-
-    private static void throwIncorrectGlideModule(Exception e) {
-        throw new IllegalStateException(
-                "GeneratedAppGlideModuleImpl is implemented incorrectly."
-                        + " If you've manually implemented this class, remove your implementation. The"
-                        + " Annotation processor will generate a correct implementation.",
-                e);
-    }
-
-    @SuppressWarnings("PMD.UnusedFormalParameter")
-    Glide(
-            @NonNull Context context,
-            @NonNull Engine engine,
-            @NonNull MemoryCache memoryCache,
-            @NonNull BitmapPool bitmapPool,
-            @NonNull ArrayPool arrayPool,
-            @NonNull RequestManagerRetriever requestManagerRetriever,
-            @NonNull ConnectivityMonitorFactory connectivityMonitorFactory,
-            int logLevel,
-            @NonNull RequestOptionsFactory defaultRequestOptionsFactory,
-            @NonNull Map<Class<?>, TransitionOptions<?, ?>> defaultTransitionOptions,
-            @NonNull List<RequestListener<Object>> defaultRequestListeners,
-            GlideExperiments experiments) {
-        this.engine = engine;
-        this.bitmapPool = bitmapPool;
-        this.arrayPool = arrayPool;
-        this.memoryCache = memoryCache;
-        this.requestManagerRetriever = requestManagerRetriever;
-        this.connectivityMonitorFactory = connectivityMonitorFactory;
-        this.defaultRequestOptionsFactory = defaultRequestOptionsFactory;
-
-        final Resources resources = context.getResources();
-
-        registry = new Registry();
-        registry.register(new DefaultImageHeaderParser());
-        // Right now we're only using this parser for HEIF images, which are only supported on OMR1+.
-        // If we need this for other file types, we should consider removing this restriction.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            registry.register(new ExifInterfaceImageHeaderParser());
-        }
-
-        List<ImageHeaderParser> imageHeaderParsers = registry.getImageHeaderParsers();
-
-        ByteBufferGifDecoder byteBufferGifDecoder =
-                new ByteBufferGifDecoder(context, imageHeaderParsers, bitmapPool, arrayPool);
-        ResourceDecoder<ParcelFileDescriptor, Bitmap> parcelFileDescriptorVideoDecoder =
-                VideoDecoder.parcel(bitmapPool);
-
-        // TODO(judds): Make ParcelFileDescriptorBitmapDecoder work with ImageDecoder.
-        Downsampler downsampler =
-                new Downsampler(
-                        registry.getImageHeaderParsers(), resources.getDisplayMetrics(), bitmapPool, arrayPool);
-
-        ResourceDecoder<ByteBuffer, Bitmap> byteBufferBitmapDecoder;
-        ResourceDecoder<InputStream, Bitmap> streamBitmapDecoder;
-        if (experiments.isEnabled(EnableImageDecoderForBitmaps.class)
-                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            streamBitmapDecoder = new InputStreamBitmapImageDecoderResourceDecoder();
-            byteBufferBitmapDecoder = new ByteBufferBitmapImageDecoderResourceDecoder();
-        } else {
-            byteBufferBitmapDecoder = new ByteBufferBitmapDecoder(downsampler);
-            streamBitmapDecoder = new StreamBitmapDecoder(downsampler, arrayPool);
-        }
-
-        ResourceDrawableDecoder resourceDrawableDecoder = new ResourceDrawableDecoder(context);
-        ResourceLoader.StreamFactory resourceLoaderStreamFactory =
-                new ResourceLoader.StreamFactory(resources);
-        ResourceLoader.UriFactory resourceLoaderUriFactory = new ResourceLoader.UriFactory(resources);
-        ResourceLoader.FileDescriptorFactory resourceLoaderFileDescriptorFactory =
-                new ResourceLoader.FileDescriptorFactory(resources);
-        ResourceLoader.AssetFileDescriptorFactory resourceLoaderAssetFileDescriptorFactory =
-                new ResourceLoader.AssetFileDescriptorFactory(resources);
-        BitmapEncoder bitmapEncoder = new BitmapEncoder(arrayPool);
-
-        BitmapBytesTranscoder bitmapBytesTranscoder = new BitmapBytesTranscoder();
-        GifDrawableBytesTranscoder gifDrawableBytesTranscoder = new GifDrawableBytesTranscoder();
-
-        ContentResolver contentResolver = context.getContentResolver();
-
-        registry
-                .append(ByteBuffer.class, new ByteBufferEncoder())
-                .append(InputStream.class, new StreamEncoder(arrayPool))
-                /* Bitmaps */
-                .append(Registry.BUCKET_BITMAP, ByteBuffer.class, Bitmap.class, byteBufferBitmapDecoder)
-                .append(Registry.BUCKET_BITMAP, InputStream.class, Bitmap.class, streamBitmapDecoder);
-
-        if (ParcelFileDescriptorRewinder.isSupported()) {
-            registry.append(
-                    Registry.BUCKET_BITMAP,
-                    ParcelFileDescriptor.class,
-                    Bitmap.class,
-                    new ParcelFileDescriptorBitmapDecoder(downsampler));
-        }
-
-        registry
-                .append(
-                        Registry.BUCKET_BITMAP,
-                        ParcelFileDescriptor.class,
-                        Bitmap.class,
-                        parcelFileDescriptorVideoDecoder)
-                .append(
-                        Registry.BUCKET_BITMAP,
-                        AssetFileDescriptor.class,
-                        Bitmap.class,
-                        VideoDecoder.asset(bitmapPool))
-                .append(Bitmap.class, Bitmap.class, UnitModelLoader.Factory.<Bitmap>getInstance())
-                .append(Registry.BUCKET_BITMAP, Bitmap.class, Bitmap.class, new UnitBitmapDecoder())
-                .append(Bitmap.class, bitmapEncoder)
-                /* BitmapDrawables */
-                .append(
-                        Registry.BUCKET_BITMAP_DRAWABLE,
-                        ByteBuffer.class,
-                        BitmapDrawable.class,
-                        new BitmapDrawableDecoder<>(resources, byteBufferBitmapDecoder))
-                .append(
-                        Registry.BUCKET_BITMAP_DRAWABLE,
-                        InputStream.class,
-                        BitmapDrawable.class,
-                        new BitmapDrawableDecoder<>(resources, streamBitmapDecoder))
-                .append(
-                        Registry.BUCKET_BITMAP_DRAWABLE,
-                        ParcelFileDescriptor.class,
-                        BitmapDrawable.class,
-                        new BitmapDrawableDecoder<>(resources, parcelFileDescriptorVideoDecoder))
-                .append(BitmapDrawable.class, new BitmapDrawableEncoder(bitmapPool, bitmapEncoder))
-                /* GIFs */
-                .append(
-                        Registry.BUCKET_GIF,
-                        InputStream.class,
-                        GifDrawable.class,
-                        new StreamGifDecoder(imageHeaderParsers, byteBufferGifDecoder, arrayPool))
-                .append(Registry.BUCKET_GIF, ByteBuffer.class, GifDrawable.class, byteBufferGifDecoder)
-                .append(GifDrawable.class, new GifDrawableEncoder())
-                /* GIF Frames */
-                // Compilation with Gradle requires the type to be specified for UnitModelLoader here.
-                .append(
-                        GifDecoder.class, GifDecoder.class, UnitModelLoader.Factory.<GifDecoder>getInstance())
-                .append(
-                        Registry.BUCKET_BITMAP,
-                        GifDecoder.class,
-                        Bitmap.class,
-                        new GifFrameResourceDecoder(bitmapPool))
-                /* Drawables */
-                .append(Uri.class, Drawable.class, resourceDrawableDecoder)
-                .append(
-                        Uri.class, Bitmap.class, new ResourceBitmapDecoder(resourceDrawableDecoder, bitmapPool))
-                /* Files */
-                .register(new ByteBufferRewinder.Factory())
-                .append(File.class, ByteBuffer.class, new ByteBufferFileLoader.Factory())
-                .append(File.class, InputStream.class, new FileLoader.StreamFactory())
-                .append(File.class, File.class, new FileDecoder())
-                .append(File.class, ParcelFileDescriptor.class, new FileLoader.FileDescriptorFactory())
-                // Compilation with Gradle requires the type to be specified for UnitModelLoader here.
-                .append(File.class, File.class, UnitModelLoader.Factory.<File>getInstance())
-                /* Models */
-                .register(new InputStreamRewinder.Factory(arrayPool));
-
-        if (ParcelFileDescriptorRewinder.isSupported()) {
-            registry.register(new ParcelFileDescriptorRewinder.Factory());
-        }
-
-        registry
-                .append(int.class, InputStream.class, resourceLoaderStreamFactory)
-                .append(int.class, ParcelFileDescriptor.class, resourceLoaderFileDescriptorFactory)
-                .append(Integer.class, InputStream.class, resourceLoaderStreamFactory)
-                .append(Integer.class, ParcelFileDescriptor.class, resourceLoaderFileDescriptorFactory)
-                .append(Integer.class, Uri.class, resourceLoaderUriFactory)
-                .append(int.class, AssetFileDescriptor.class, resourceLoaderAssetFileDescriptorFactory)
-                .append(Integer.class, AssetFileDescriptor.class, resourceLoaderAssetFileDescriptorFactory)
-                .append(int.class, Uri.class, resourceLoaderUriFactory)
-                .append(String.class, InputStream.class, new DataUrlLoader.StreamFactory<String>())
-                .append(Uri.class, InputStream.class, new DataUrlLoader.StreamFactory<Uri>())
-                .append(String.class, InputStream.class, new StringLoader.StreamFactory())
-                .append(String.class, ParcelFileDescriptor.class, new StringLoader.FileDescriptorFactory())
-                .append(
-                        String.class, AssetFileDescriptor.class, new StringLoader.AssetFileDescriptorFactory())
-                .append(Uri.class, InputStream.class, new AssetUriLoader.StreamFactory(context.getAssets()))
-                .append(
-                        Uri.class,
-                        ParcelFileDescriptor.class,
-                        new AssetUriLoader.FileDescriptorFactory(context.getAssets()))
-                .append(Uri.class, InputStream.class, new MediaStoreImageThumbLoader.Factory(context))
-                .append(Uri.class, InputStream.class, new MediaStoreVideoThumbLoader.Factory(context));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            registry.append(
-                    Uri.class, InputStream.class, new QMediaStoreUriLoader.InputStreamFactory(context));
-            registry.append(
-                    Uri.class,
-                    ParcelFileDescriptor.class,
-                    new QMediaStoreUriLoader.FileDescriptorFactory(context));
-        }
-        registry
-                .append(Uri.class, InputStream.class, new UriLoader.StreamFactory(contentResolver))
-                .append(
-                        Uri.class,
-                        ParcelFileDescriptor.class,
-                        new UriLoader.FileDescriptorFactory(contentResolver))
-                .append(
-                        Uri.class,
-                        AssetFileDescriptor.class,
-                        new UriLoader.AssetFileDescriptorFactory(contentResolver))
-                .append(Uri.class, InputStream.class, new UrlUriLoader.StreamFactory())
-                .append(URL.class, InputStream.class, new UrlLoader.StreamFactory())
-                .append(Uri.class, File.class, new MediaStoreFileLoader.Factory(context))
-                .append(GlideUrl.class, InputStream.class, new HttpGlideUrlLoader.Factory())
-                .append(byte[].class, ByteBuffer.class, new ByteArrayLoader.ByteBufferFactory())
-                .append(byte[].class, InputStream.class, new ByteArrayLoader.StreamFactory())
-                .append(Uri.class, Uri.class, UnitModelLoader.Factory.<Uri>getInstance())
-                .append(Drawable.class, Drawable.class, UnitModelLoader.Factory.<Drawable>getInstance())
-                .append(Drawable.class, Drawable.class, new UnitDrawableDecoder())
-                /* Transcoders */
-                .register(Bitmap.class, BitmapDrawable.class, new BitmapDrawableTranscoder(resources))
-                .register(Bitmap.class, byte[].class, bitmapBytesTranscoder)
-                .register(
-                        Drawable.class,
-                        byte[].class,
-                        new DrawableBytesTranscoder(
-                                bitmapPool, bitmapBytesTranscoder, gifDrawableBytesTranscoder))
-                .register(GifDrawable.class, byte[].class, gifDrawableBytesTranscoder);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            ResourceDecoder<ByteBuffer, Bitmap> byteBufferVideoDecoder =
-                    VideoDecoder.byteBuffer(bitmapPool);
-            registry.append(ByteBuffer.class, Bitmap.class, byteBufferVideoDecoder);
-            registry.append(
-                    ByteBuffer.class,
-                    BitmapDrawable.class,
-                    new BitmapDrawableDecoder<>(resources, byteBufferVideoDecoder));
-        }
-
-        ImageViewTargetFactory imageViewTargetFactory = new ImageViewTargetFactory();
-        glideContext =
-                new GlideContext(
-                        context,
-                        arrayPool,
-                        registry,
-                        imageViewTargetFactory,
-                        defaultRequestOptionsFactory,
-                        defaultTransitionOptions,
-                        defaultRequestListeners,
-                        engine,
-                        experiments,
-                        logLevel);
-    }
-
-    /**
-     * Returns the {@link com.bumptech.glide.load.engine.bitmap_recycle.BitmapPool} used to
-     * temporarily store {@link android.graphics.Bitmap}s so they can be reused to avoid garbage
-     * collections.
-     *
-     * <p>Note - Using this pool directly can lead to undefined behavior and strange drawing errors.
-     * Any {@link android.graphics.Bitmap} added to the pool must not be currently in use in any other
-     * part of the application. Any {@link android.graphics.Bitmap} added to the pool must be removed
-     * from the pool before it is added a second time.
-     *
-     * <p>Note - To make effective use of the pool, any {@link android.graphics.Bitmap} removed from
-     * the pool must eventually be re-added. Otherwise the pool will eventually empty and will not
-     * serve any useful purpose.
-     *
-     * <p>The primary reason this object is exposed is for use in custom {@link
-     * com.bumptech.glide.load.ResourceDecoder}s and {@link com.bumptech.glide.load.Transformation}s.
-     * Use outside of these classes is not generally recommended.
-     */
-    @NonNull
-    public BitmapPool getBitmapPool() {
-        return bitmapPool;
-    }
-
-    @NonNull
-    public ArrayPool getArrayPool() {
-        return arrayPool;
-    }
-
-    /**
-     * @return The context associated with this instance.
-     */
-    @NonNull
-    public Context getContext() {
-        return glideContext.getBaseContext();
-    }
-
-    ConnectivityMonitorFactory getConnectivityMonitorFactory() {
-        return connectivityMonitorFactory;
-    }
-
-    @NonNull
-    GlideContext getGlideContext() {
-        return glideContext;
-    }
-
-    /**
-     * Pre-fills the {@link BitmapPool} using the given sizes.
-     *
-     * <p>Enough Bitmaps are added to completely fill the pool, so most or all of the Bitmaps
+     * Enough Bitmaps are added to completely fill the pool, so most or all of the Bitmaps
      * currently in the pool will be evicted. Bitmaps are allocated according to the weights of the
      * given sizes, where each size gets (weight / prefillWeightSum) percent of the pool to fill.
      *
-     * <p>Note - Pre-filling is done asynchronously using and {@link IdleHandler}. Any currently
+     *
+     * Note - Pre-filling is done asynchronously using and [IdleHandler]. Any currently
      * running pre-fill will be cancelled and replaced by a call to this method.
      *
-     * <p>This method should be used with caution, overly aggressive pre-filling is substantially
+     *
+     * This method should be used with caution, overly aggressive pre-filling is substantially
      * worse than not pre-filling at all. Pre-filling should only be started in onCreate to avoid
-     * constantly clearing and re-filling the {@link BitmapPool}. Rotation should be carefully
+     * constantly clearing and re-filling the [BitmapPool]. Rotation should be carefully
      * considered as well. It may be worth calling this method only when no saved instance state
      * exists so that pre-filling only happens when the Activity is first created, rather than on
      * every rotation.
      *
-     * @param bitmapAttributeBuilders The list of {@link Builder Builders} representing individual
-     *                                sizes and configurations of {@link Bitmap}s to be pre-filled.
+     * @param bitmapAttributeBuilders The list of [Builders][Builder] representing individual
+     * sizes and configurations of [Bitmap]s to be pre-filled.
      */
-    @SuppressWarnings("unused") // Public API
-    public synchronized void preFillBitmapPool(
-            @NonNull PreFillType.Builder... bitmapAttributeBuilders) {
+    @Synchronized  // Public API
+    fun preFillBitmapPool(
+        vararg bitmapAttributeBuilders: PreFillType.Builder
+    ) {
         if (bitmapPreFiller == null) {
-            DecodeFormat decodeFormat =
-                    defaultRequestOptionsFactory.build().getOptions().get(Downsampler.DECODE_FORMAT);
-            bitmapPreFiller = new BitmapPreFiller(memoryCache, bitmapPool, decodeFormat);
+            val decodeFormat: DecodeFormat =
+                defaultRequestOptionsFactory.build().getOptions().get(Downsampler.DECODE_FORMAT)
+            bitmapPreFiller = BitmapPreFiller(memoryCache, bitmapPool, decodeFormat)
         }
-
-        bitmapPreFiller.preFill(bitmapAttributeBuilders);
+        bitmapPreFiller.preFill(bitmapAttributeBuilders)
     }
 
-    /**
-     * Clears as much memory as possible.
-     *
-     * @see android.content.ComponentCallbacks#onLowMemory()
-     * @see android.content.ComponentCallbacks2#onLowMemory()
-     */
-    public void clearMemory() {
-        // Engine asserts this anyway when removing resources, fail faster and consistently
-        Util.assertMainThread();
-        // memory cache needs to be cleared before bitmap pool to clear re-pooled Bitmaps too. See #687.
-        memoryCache.clearMemory();
-        bitmapPool.clearMemory();
-        arrayPool.clearMemory();
+    //清空内存    public void clearMemory()
+    //缩容(内存)  public void trimMemory(int level)
+    //清空磁盘缓存 public void clearDiskCache()
+    //设置内存策略 public setMemoryCategory
+    fun getRegistry(): Registry {
+        return registry
     }
 
-    /**
-     * Clears some memory with the exact amount depending on the given level.
-     *
-     * @see android.content.ComponentCallbacks2#onTrimMemory(int)
-     */
-    public void trimMemory(int level) {
-        // Engine asserts this anyway when removing resources, fail faster and consistently
-        Util.assertMainThread();
-        // Request managers need to be trimmed before the caches and pools, in order for the latter to
-        // have the most benefit.
-        synchronized (managers) {
-            for (RequestManager manager : managers) {
-                manager.onTrimMemory(level);
-            }
-        }
-        // memory cache needs to be trimmed before bitmap pool to trim re-pooled Bitmaps too. See #687.
-        memoryCache.trimMemory(level);
-        bitmapPool.trimMemory(level);
-        arrayPool.trimMemory(level);
-    }
-
-    /**
-     * Clears disk cache.
-     *
-     * <p>This method should always be called on a background thread, since it is a blocking call.
-     */
-    // Public API.
-    @SuppressWarnings({"unused", "WeakerAccess"})
-    public void clearDiskCache() {
-        Util.assertBackgroundThread();
-        engine.clearDiskCache();
-    }
-
-    /**
-     * Internal method.
-     */
-    @NonNull
-    public RequestManagerRetriever getRequestManagerRetriever() {
-        return requestManagerRetriever;
-    }
-
-    /**
-     * Adjusts Glide's current and maximum memory usage based on the given {@link MemoryCategory}.
-     *
-     * <p>The default {@link MemoryCategory} is {@link MemoryCategory#NORMAL}. {@link
-     * MemoryCategory#HIGH} increases Glide's maximum memory usage by up to 50% and {@link
-     * MemoryCategory#LOW} decreases Glide's maximum memory usage by 50%. This method should be used
-     * to temporarily increase or decrease memory usage for a single Activity or part of the app. Use
-     * {@link GlideBuilder#setMemoryCache(MemoryCache)} to put a permanent memory size if you want to
-     * change the default.
-     *
-     * @return the previous MemoryCategory used by Glide.
-     */
-    @SuppressWarnings("WeakerAccess") // Public API
-    @NonNull
-    public MemoryCategory setMemoryCategory(@NonNull MemoryCategory memoryCategory) {
-        // Engine asserts this anyway when removing resources, fail faster and consistently
-        Util.assertMainThread();
-        // memory cache needs to be trimmed before bitmap pool to trim re-pooled Bitmaps too. See #687.
-        memoryCache.setSizeMultiplier(memoryCategory.getMultiplier());
-        bitmapPool.setSizeMultiplier(memoryCategory.getMultiplier());
-        MemoryCategory oldCategory = this.memoryCategory;
-        this.memoryCategory = memoryCategory;
-        return oldCategory;
-    }
-
-    @NonNull
-    private static RequestManagerRetriever getRetriever(@Nullable Context context) {
-        // Context could be null for other reasons (ie the user passes in null), but in practice it will
-        // only occur due to errors with the Fragment lifecycle.
-        Preconditions.checkNotNull(
-                context,
-                "You cannot start a load on a not yet attached View or a Fragment where getActivity() "
-                        + "returns null (which usually occurs when getActivity() is called before the Fragment "
-                        + "is attached or after the Fragment is destroyed).");
-        return Glide.get(context).getRequestManagerRetriever();
-    }
-
-    /**
-     * Begin a load with Glide by passing in a context.
-     *
-     * <p>Any requests started using a context will only have the application level options applied
-     * and will not be started or stopped based on lifecycle events. In general, loads should be
-     * started at the level the result will be used in. If the resource will be used in a view in a
-     * child fragment, the load should be started with {@link #with(android.app.Fragment)}} using that
-     * child fragment. Similarly, if the resource will be used in a view in the parent fragment, the
-     * load should be started with {@link #with(android.app.Fragment)} using the parent fragment. In
-     * the same vein, if the resource will be used in a view in an activity, the load should be
-     * started with {@link #with(android.app.Activity)}}.
-     *
-     * <p>This method is appropriate for resources that will be used outside of the normal fragment or
-     * activity lifecycle (For example in services, or for notification thumbnails).
-     *
-     * @param context Any context, will not be retained.
-     * @return A RequestManager for the top level application that can be used to start a load.
-     * @see #with(android.app.Activity)
-     * @see #with(android.app.Fragment)
-     * @see #with(androidx.fragment.app.Fragment)
-     * @see #with(androidx.fragment.app.FragmentActivity)
-     */
-    @NonNull
-    public static RequestManager with(@NonNull Context context) {
-        return getRetriever(context).get(context);
-    }
-
-    /**
-     * Begin a load with Glide that will be tied to the given {@link android.app.Activity}'s lifecycle
-     * and that uses the given {@link Activity}'s default options.
-     *
-     * @param activity The activity to use.
-     * @return A RequestManager for the given activity that can be used to start a load.
-     */
-    @NonNull
-    public static RequestManager with(@NonNull Activity activity) {
-        return getRetriever(activity).get(activity);
-    }
-
-    /**
-     * Begin a load with Glide that will tied to the give {@link
-     * androidx.fragment.app.FragmentActivity}'s lifecycle and that uses the given {@link
-     * androidx.fragment.app.FragmentActivity}'s default options.
-     *
-     * @param activity The activity to use.
-     * @return A RequestManager for the given FragmentActivity that can be used to start a load.
-     */
-    @NonNull
-    public static RequestManager with(@NonNull FragmentActivity activity) {
-        return getRetriever(activity).get(activity);
-    }
-
-    /**
-     * Begin a load with Glide that will be tied to the given {@link androidx.fragment.app.Fragment}'s
-     * lifecycle and that uses the given {@link androidx.fragment.app.Fragment}'s default options.
-     *
-     * @param fragment The fragment to use.
-     * @return A RequestManager for the given Fragment that can be used to start a load.
-     */
-    @NonNull
-    public static RequestManager with(@NonNull Fragment fragment) {
-        return getRetriever(fragment.getContext()).get(fragment);
-    }
-
-    /**
-     * Begin a load with Glide that will be tied to the given {@link android.app.Fragment}'s lifecycle
-     * and that uses the given {@link android.app.Fragment}'s default options.
-     *
-     * @param fragment The fragment to use.
-     * @return A RequestManager for the given Fragment that can be used to start a load.
-     * @deprecated Prefer support Fragments and {@link #with(Fragment)} instead, {@link
-     * android.app.Fragment} will be deprecated. See
-     * https://github.com/android/android-ktx/pull/161#issuecomment-363270555.
-     */
-    @SuppressWarnings("deprecation")
-    @Deprecated
-    @NonNull
-    public static RequestManager with(@NonNull android.app.Fragment fragment) {
-        return getRetriever(fragment.getActivity()).get(fragment);
-    }
-
-    /**
-     * Begin a load with Glide that will be tied to the lifecycle of the {@link Fragment}, {@link
-     * android.app.Fragment}, or {@link Activity} that contains the View.
-     *
-     * <p>A {@link Fragment} or {@link android.app.Fragment} is assumed to contain a View if the View
-     * is a child of the View returned by the {@link Fragment#getView()}} method.
-     *
-     * <p>This method will not work if the View is not attached. Prefer the Activity and Fragment
-     * variants unless you're loading in a View subclass.
-     *
-     * <p>This method may be inefficient aways and is definitely inefficient for large hierarchies.
-     * Consider memoizing the result after the View is attached or again, prefer the Activity and
-     * Fragment variants whenever possible.
-     *
-     * <p>When used in Applications that use the non-support {@link android.app.Fragment} classes,
-     * calling this method will produce noisy logs from {@link android.app.FragmentManager}. Consider
-     * avoiding entirely or using the {@link Fragment}s from the support library instead.
-     *
-     * <p>If the support {@link FragmentActivity} class is used, this method will only attempt to
-     * discover support {@link Fragment}s. Any non-support {@link android.app.Fragment}s attached to
-     * the {@link FragmentActivity} will be ignored.
-     *
-     * @param view The view to search for a containing Fragment or Activity from.
-     * @return A RequestManager that can be used to start a load.
-     */
-    @NonNull
-    public static RequestManager with(@NonNull View view) {
-        return getRetriever(view.getContext()).get(view);
-    }
-
-    @NonNull
-    public Registry getRegistry() {
-        return registry;
-    }
-
-    boolean removeFromManagers(@NonNull Target<?> target) {
-        synchronized (managers) {
-            for (RequestManager requestManager : managers) {
+    fun removeFromManagers(target: Target<*>): Boolean {
+        synchronized(managers) {
+            for (requestManager in managers) {
                 if (requestManager.untrack(target)) {
-                    return true;
+                    return true
                 }
             }
         }
-
-        return false;
+        return false
     }
 
-    void registerRequestManager(RequestManager requestManager) {
-        synchronized (managers) {
-            if (managers.contains(requestManager)) {
-                throw new IllegalStateException("Cannot register already registered manager");
-            }
-            managers.add(requestManager);
+    fun registerRequestManager(requestManager: RequestManager) {
+        synchronized(managers) {
+            check(!managers.contains(requestManager)) { "Cannot register already registered manager" }
+            managers.add(requestManager)
         }
     }
 
-    void unregisterRequestManager(RequestManager requestManager) {
-        synchronized (managers) {
-            if (!managers.contains(requestManager)) {
-                throw new IllegalStateException("Cannot unregister not yet registered manager");
-            }
-            managers.remove(requestManager);
+    fun unregisterRequestManager(requestManager: RequestManager) {
+        synchronized(managers) {
+            check(managers.contains(requestManager)) { "Cannot unregister not yet registered manager" }
+            managers.remove(requestManager)
         }
     }
 
-    @Override
-    public void onTrimMemory(int level) {
-        trimMemory(level);
+    override fun onTrimMemory(level: Int) {
+//        trimMemory(level);
     }
 
-    @Override
-    public void onConfigurationChanged(Configuration newConfig) {
+    override fun onConfigurationChanged(newConfig: Configuration) {
         // Do nothing.
     }
 
-    @Override
-    public void onLowMemory() {
-        clearMemory();
+    override fun onLowMemory() {
+//        clearMemory();
     }
 
     /**
-     * Creates a new instance of {@link RequestOptions}.
+     * Creates a new instance of [RequestOptions].
      */
-    public interface RequestOptionsFactory {
-
+    interface RequestOptionsFactory {
         /**
-         * Returns a non-null {@link RequestOptions} object.
+         * Returns a non-null [RequestOptions] object.
          */
-        @NonNull
-        RequestOptions build();
+        fun build(): RequestOptions
+    }
+
+    companion object {
+        private const val DEFAULT_DISK_CACHE_DIR = "image_manager_disk_cache"
+        private const val TAG = "Glide"
+
+        @GuardedBy("Glide.class")
+        @Volatile
+        private var glide: Glide? = null
+
+        //返回一个单例的glide, 并且会进行初始化
+        operator fun get(context: Context): Glide {
+            if (glide == null) {
+                synchronized(Glide::class.java) {
+                    if (glide == null) {
+                        val applicationContext = context.applicationContext
+                        applicationContext.registerComponentCallbacks(glide)
+                        glide = Glide(context)
+                    }
+                }
+            }
+            return glide!!
+        }
+
+        fun with(context: Context): RequestManager {
+            return Companion[context].requestManagerRetriever[context]
+        }
+    }
+
+    init {
+        this.connectivityMonitorFactory = connectivityMonitorFactory
+        this.defaultRequestOptionsFactory = defaultRequestOptionsFactory
+        val resources = context.resources
+        registry = Registry()
+        registry.register(DefaultImageHeaderParser())
+        // Right now we're only using this parser for HEIF images, which are only supported on OMR1+.
+        // If we need this for other file types, we should consider removing this restriction.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            registry.register(ExifInterfaceImageHeaderParser())
+        }
+        val imageHeaderParsers: List<ImageHeaderParser> = registry.getImageHeaderParsers()
+        val byteBufferGifDecoder =
+            ByteBufferGifDecoder(context, imageHeaderParsers, bitmapPool, arrayPool)
+        val parcelFileDescriptorVideoDecoder: ResourceDecoder<ParcelFileDescriptor, Bitmap> =
+            VideoDecoder.parcel(bitmapPool)
+
+        // TODO(judds): Make ParcelFileDescriptorBitmapDecoder work with ImageDecoder.
+        val downsampler = Downsampler(
+            registry.getImageHeaderParsers(), resources.displayMetrics, bitmapPool, arrayPool
+        )
+        val byteBufferBitmapDecoder: ResourceDecoder<ByteBuffer, Bitmap>
+        val streamBitmapDecoder: ResourceDecoder<InputStream, Bitmap>
+        if (experiments.isEnabled(EnableImageDecoderForBitmaps::class.java)
+            && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+        ) {
+            streamBitmapDecoder = InputStreamBitmapImageDecoderResourceDecoder()
+            byteBufferBitmapDecoder = ByteBufferBitmapImageDecoderResourceDecoder()
+        } else {
+            byteBufferBitmapDecoder = ByteBufferBitmapDecoder(downsampler)
+            streamBitmapDecoder = StreamBitmapDecoder(downsampler, arrayPool)
+        }
+        val resourceDrawableDecoder = ResourceDrawableDecoder(context)
+        val resourceLoaderStreamFactory: ResourceLoader.StreamFactory = StreamFactory(resources)
+        val resourceLoaderUriFactory = UriFactory(resources)
+        val resourceLoaderFileDescriptorFactory: ResourceLoader.FileDescriptorFactory =
+            FileDescriptorFactory(resources)
+        val resourceLoaderAssetFileDescriptorFactory: ResourceLoader.AssetFileDescriptorFactory =
+            AssetFileDescriptorFactory(resources)
+        val bitmapEncoder = BitmapEncoder(arrayPool)
+        val bitmapBytesTranscoder = BitmapBytesTranscoder()
+        val gifDrawableBytesTranscoder = GifDrawableBytesTranscoder()
+        val contentResolver = context.contentResolver
+        registry
+            .append(ByteBuffer::class.java, ByteBufferEncoder())
+            .append(InputStream::class.java, StreamEncoder(arrayPool)) /* Bitmaps */
+            .append(
+                Registry.BUCKET_BITMAP,
+                ByteBuffer::class.java,
+                Bitmap::class.java,
+                byteBufferBitmapDecoder
+            )
+            .append(
+                Registry.BUCKET_BITMAP,
+                InputStream::class.java,
+                Bitmap::class.java,
+                streamBitmapDecoder
+            )
+        if (ParcelFileDescriptorRewinder.isSupported()) {
+            registry.append(
+                Registry.BUCKET_BITMAP,
+                ParcelFileDescriptor::class.java,
+                Bitmap::class.java,
+                ParcelFileDescriptorBitmapDecoder(downsampler)
+            )
+        }
+        registry
+            .append(
+                Registry.BUCKET_BITMAP,
+                ParcelFileDescriptor::class.java,
+                Bitmap::class.java,
+                parcelFileDescriptorVideoDecoder
+            )
+            .append(
+                Registry.BUCKET_BITMAP,
+                AssetFileDescriptor::class.java,
+                Bitmap::class.java,
+                VideoDecoder.asset(bitmapPool)
+            )
+            .append(
+                Bitmap::class.java,
+                Bitmap::class.java,
+                UnitModelLoader.Factory.< Bitmap > getInstance < Bitmap ? > ()
+            )
+            .append(
+                Registry.BUCKET_BITMAP,
+                Bitmap::class.java,
+                Bitmap::class.java,
+                UnitBitmapDecoder()
+            )
+            .append(Bitmap::class.java, bitmapEncoder) /* BitmapDrawables */
+            .append(
+                Registry.BUCKET_BITMAP_DRAWABLE,
+                ByteBuffer::class.java,
+                BitmapDrawable::class.java,
+                BitmapDrawableDecoder(resources, byteBufferBitmapDecoder)
+            )
+            .append(
+                Registry.BUCKET_BITMAP_DRAWABLE,
+                InputStream::class.java,
+                BitmapDrawable::class.java,
+                BitmapDrawableDecoder(resources, streamBitmapDecoder)
+            )
+            .append(
+                Registry.BUCKET_BITMAP_DRAWABLE,
+                ParcelFileDescriptor::class.java,
+                BitmapDrawable::class.java,
+                BitmapDrawableDecoder(resources, parcelFileDescriptorVideoDecoder)
+            )
+            .append(
+                BitmapDrawable::class.java,
+                BitmapDrawableEncoder(bitmapPool, bitmapEncoder)
+            ) /* GIFs */
+            .append(
+                Registry.BUCKET_GIF,
+                InputStream::class.java,
+                GifDrawable::class.java,
+                StreamGifDecoder(imageHeaderParsers, byteBufferGifDecoder, arrayPool)
+            )
+            .append(
+                Registry.BUCKET_GIF,
+                ByteBuffer::class.java,
+                GifDrawable::class.java,
+                byteBufferGifDecoder
+            )
+            .append(
+                GifDrawable::class.java,
+                GifDrawableEncoder()
+            ) /* GIF Frames */ // Compilation with Gradle requires the type to be specified for UnitModelLoader here.
+            .append(
+                GifDecoder::class.java,
+                GifDecoder::class.java,
+                UnitModelLoader.Factory.< GifDecoder > getInstance < GifDecoder ? > ()
+            )
+            .append(
+                Registry.BUCKET_BITMAP,
+                GifDecoder::class.java,
+                Bitmap::class.java,
+                GifFrameResourceDecoder(bitmapPool)
+            ) /* Drawables */
+            .append(Uri::class.java, Drawable::class.java, resourceDrawableDecoder)
+            .append(
+                Uri::class.java,
+                Bitmap::class.java,
+                ResourceBitmapDecoder(resourceDrawableDecoder, bitmapPool)
+            ) /* Files */
+            .register(Factory())
+            .append(File::class.java, ByteBuffer::class.java, Factory())
+            .append(File::class.java, InputStream::class.java, StreamFactory())
+            .append(File::class.java, File::class.java, FileDecoder())
+            .append(
+                File::class.java,
+                ParcelFileDescriptor::class.java,
+                FileDescriptorFactory()
+            ) // Compilation with Gradle requires the type to be specified for UnitModelLoader here.
+            .append(
+                File::class.java,
+                File::class.java,
+                UnitModelLoader.Factory.< File > getInstance < java . io . File ? > ()
+            ) /* Models */
+            .register(Factory(arrayPool))
+        if (ParcelFileDescriptorRewinder.isSupported()) {
+            registry.register(Factory())
+        }
+        registry
+            .append(
+                Int::class.javaPrimitiveType,
+                InputStream::class.java,
+                resourceLoaderStreamFactory
+            )
+            .append(
+                Int::class.javaPrimitiveType,
+                ParcelFileDescriptor::class.java,
+                resourceLoaderFileDescriptorFactory
+            )
+            .append(Int::class.java, InputStream::class.java, resourceLoaderStreamFactory)
+            .append(
+                Int::class.java,
+                ParcelFileDescriptor::class.java,
+                resourceLoaderFileDescriptorFactory
+            )
+            .append(Int::class.java, Uri::class.java, resourceLoaderUriFactory)
+            .append(
+                Int::class.javaPrimitiveType,
+                AssetFileDescriptor::class.java,
+                resourceLoaderAssetFileDescriptorFactory
+            )
+            .append(
+                Int::class.java,
+                AssetFileDescriptor::class.java,
+                resourceLoaderAssetFileDescriptorFactory
+            )
+            .append(Int::class.javaPrimitiveType, Uri::class.java, resourceLoaderUriFactory)
+            .append(String::class.java, InputStream::class.java, StreamFactory<String>())
+            .append(Uri::class.java, InputStream::class.java, StreamFactory<Uri>())
+            .append(String::class.java, InputStream::class.java, StreamFactory())
+            .append(String::class.java, ParcelFileDescriptor::class.java, FileDescriptorFactory())
+            .append(
+                String::class.java, AssetFileDescriptor::class.java, AssetFileDescriptorFactory()
+            )
+            .append(Uri::class.java, InputStream::class.java, StreamFactory(context.assets))
+            .append(
+                Uri::class.java,
+                ParcelFileDescriptor::class.java,
+                FileDescriptorFactory(context.assets)
+            )
+            .append(Uri::class.java, InputStream::class.java, Factory(context))
+            .append(Uri::class.java, InputStream::class.java, Factory(context))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            registry.append(
+                Uri::class.java, InputStream::class.java, InputStreamFactory(context)
+            )
+            registry.append(
+                Uri::class.java,
+                ParcelFileDescriptor::class.java,
+                FileDescriptorFactory(context)
+            )
+        }
+        registry
+            .append(Uri::class.java, InputStream::class.java, StreamFactory(contentResolver))
+            .append(
+                Uri::class.java,
+                ParcelFileDescriptor::class.java,
+                FileDescriptorFactory(contentResolver)
+            )
+            .append(
+                Uri::class.java,
+                AssetFileDescriptor::class.java,
+                AssetFileDescriptorFactory(contentResolver)
+            )
+            .append(Uri::class.java, InputStream::class.java, StreamFactory())
+            .append(URL::class.java, InputStream::class.java, StreamFactory())
+            .append(Uri::class.java, File::class.java, Factory(context))
+            .append(GlideUrl::class.java, InputStream::class.java, Factory())
+            .append(ByteArray::class.java, ByteBuffer::class.java, ByteBufferFactory())
+            .append(ByteArray::class.java, InputStream::class.java, StreamFactory())
+            .append(
+                Uri::class.java,
+                Uri::class.java,
+                UnitModelLoader.Factory.< Uri > getInstance < android . net . Uri ? > ()
+            )
+            .append(
+                Drawable::class.java,
+                Drawable::class.java,
+                UnitModelLoader.Factory.< Drawable > getInstance < android . graphics . drawable . Drawable ? > ()
+            )
+            .append(
+                Drawable::class.java,
+                Drawable::class.java,
+                UnitDrawableDecoder()
+            ) /* Transcoders */
+            .register(
+                Bitmap::class.java,
+                BitmapDrawable::class.java,
+                BitmapDrawableTranscoder(resources)
+            )
+            .register(Bitmap::class.java, ByteArray::class.java, bitmapBytesTranscoder)
+            .register(
+                Drawable::class.java,
+                ByteArray::class.java,
+                DrawableBytesTranscoder(
+                    bitmapPool, bitmapBytesTranscoder, gifDrawableBytesTranscoder
+                )
+            )
+            .register(GifDrawable::class.java, ByteArray::class.java, gifDrawableBytesTranscoder)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val byteBufferVideoDecoder: ResourceDecoder<ByteBuffer, Bitmap> =
+                VideoDecoder.byteBuffer(bitmapPool)
+            registry.append(ByteBuffer::class.java, Bitmap::class.java, byteBufferVideoDecoder)
+            registry.append(
+                ByteBuffer::class.java,
+                BitmapDrawable::class.java,
+                BitmapDrawableDecoder(resources, byteBufferVideoDecoder)
+            )
+        }
+        val imageViewTargetFactory = ImageViewTargetFactory()
+        glideContext = GlideContext(
+            context,
+            arrayPool,
+            registry,
+            imageViewTargetFactory,
+            defaultRequestOptionsFactory,
+            defaultTransitionOptions,
+            defaultRequestListeners,
+            engine,
+            experiments,
+            logLevel
+        )
     }
 }

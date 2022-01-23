@@ -1,278 +1,234 @@
-package com.example.glidemini.bitmapRecycle;
+package com.example.glidemini.bitmapRecycle
 
-import android.util.Log;
-import androidx.annotation.Nullable;
-import androidx.annotation.VisibleForTesting;
-import com.bumptech.glide.util.Preconditions;
-import com.bumptech.glide.util.Synthetic;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.NavigableMap;
-import java.util.TreeMap;
+import android.content.ComponentCallbacks2
+import android.util.Log
+import com.example.glidemini.util.Synthetic
+import java.lang.IllegalArgumentException
+import java.lang.NullPointerException
+import java.util.*
 
 /**
- * A fixed size Array Pool that evicts arrays using an LRU strategy to keep the pool under the
- * maximum byte size.
+ * 一个固定大小的Array Pool，它使用LRU策略驱逐数组
  */
-public final class LruArrayPool implements ArrayPool {
-  // 4MB.
-  private static final int DEFAULT_SIZE = 4 * 1024 * 1024;
+class LruArrayPool(
+    private val maxSize: Int = 4 * 1024 * 1024, //4M
+) : ArrayPool {
+    private val groupedMap = GroupedLinkedMap<Key?, Any>()
+    private val keyPool = KeyPool()
+    private val sortedSizes: MutableMap<Class<*>, NavigableMap<Int, Int>> = HashMap()
+    private val adapters: MutableMap<Class<*>, ArrayAdapterInterface<*>> = HashMap()
 
-  /**
-   * The maximum number of times larger an int array may be to be than a requested size to eligible
-   * to be returned from the pool.
-   */
-  @VisibleForTesting static final int MAX_OVER_SIZE_MULTIPLE = 8;
-  /** Used to calculate the maximum % of the total pool size a single byte array may consume. */
-  private static final int SINGLE_ARRAY_MAX_SIZE_DIVISOR = 2;
+    private var currentSize = 0
 
-  private final GroupedLinkedMap<Key, Object> groupedMap = new GroupedLinkedMap<>();
-  private final KeyPool keyPool = new KeyPool();
-  private final Map<Class<?>, NavigableMap<Integer, Integer>> sortedSizes = new HashMap<>();
-  private final Map<Class<?>, ArrayAdapterInterface<?>> adapters = new HashMap<>();
-  private final int maxSize;
-  private int currentSize;
 
-  @VisibleForTesting
-  public LruArrayPool() {
-    maxSize = DEFAULT_SIZE;
-  }
-
-  /**
-   * Constructor for a new pool.
-   *
-   * @param maxSize The maximum size in integers of the pool.
-   */
-  public LruArrayPool(int maxSize) {
-    this.maxSize = maxSize;
-  }
-
-  @Deprecated
-  @Override
-  public <T> void put(T array, Class<T> arrayClass) {
-    put(array);
-  }
-
-  @Override
-  public synchronized <T> void put(T array) {
-    @SuppressWarnings("unchecked")
-    Class<T> arrayClass = (Class<T>) array.getClass();
-
-    ArrayAdapterInterface<T> arrayAdapter = getAdapterFromType(arrayClass);
-    int size = arrayAdapter.getArrayLength(array);
-    int arrayBytes = size * arrayAdapter.getElementSizeInBytes();
-    if (!isSmallEnoughForReuse(arrayBytes)) {
-      return;
-    }
-    Key key = keyPool.get(size, arrayClass);
-
-    groupedMap.put(key, array);
-    NavigableMap<Integer, Integer> sizes = getSizesForAdapter(arrayClass);
-    Integer current = sizes.get(key.size);
-    sizes.put(key.size, current == null ? 1 : current + 1);
-    currentSize += arrayBytes;
-    evict();
-  }
-
-  @Override
-  public synchronized <T> T getExact(int size, Class<T> arrayClass) {
-    Key key = keyPool.get(size, arrayClass);
-    return getForKey(key, arrayClass);
-  }
-
-  @Override
-  public synchronized <T> T get(int size, Class<T> arrayClass) {
-    Integer possibleSize = getSizesForAdapter(arrayClass).ceilingKey(size);
-    final Key key;
-    if (mayFillRequest(size, possibleSize)) {
-      key = keyPool.get(possibleSize, arrayClass);
-    } else {
-      key = keyPool.get(size, arrayClass);
-    }
-    return getForKey(key, arrayClass);
-  }
-
-  private <T> T getForKey(Key key, Class<T> arrayClass) {
-    ArrayAdapterInterface<T> arrayAdapter = getAdapterFromType(arrayClass);
-    T result = getArrayForKey(key);
-    if (result != null) {
-      currentSize -= arrayAdapter.getArrayLength(result) * arrayAdapter.getElementSizeInBytes();
-      decrementArrayOfSize(arrayAdapter.getArrayLength(result), arrayClass);
+    @Synchronized
+    override fun <T> put(array: T) {
+        val arrayClass: Class<T> = array!!.javaClass as Class<T>
+        val arrayAdapter = getAdapterFromType(arrayClass)
+        val size = arrayAdapter.getArrayLength(array)
+        val arrayBytes = size * arrayAdapter.elementSizeInBytes
+        if (!isSmallEnoughForReuse(arrayBytes)) {
+            return
+        }
+        val key = keyPool[size, arrayClass]
+        groupedMap.put(key, array)
+        val sizes = getSizesForAdapter(arrayClass)
+        val current = sizes[key!!.size]
+        sizes[key.size] = if (current == null) 1 else current + 1
+        currentSize += arrayBytes
+        evict()
     }
 
-    if (result == null) {
-      if (Log.isLoggable(arrayAdapter.getTag(), Log.VERBOSE)) {
-        Log.v(arrayAdapter.getTag(), "Allocated " + key.size + " bytes");
-      }
-      result = arrayAdapter.newArray(key.size);
+    @Synchronized
+    override fun <T> getExact(size: Int, arrayClass: Class<T>): T? {
+        val key = keyPool[size, arrayClass]
+        return getForKey(key, arrayClass)
     }
-    return result;
-  }
 
-  // Our cast is safe because the Key is based on the type.
-  @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
-  @Nullable
-  private <T> T getArrayForKey(Key key) {
-    return (T) groupedMap.get(key);
-  }
-
-  private boolean isSmallEnoughForReuse(int byteSize) {
-    return byteSize <= maxSize / SINGLE_ARRAY_MAX_SIZE_DIVISOR;
-  }
-
-  private boolean mayFillRequest(int requestedSize, Integer actualSize) {
-    return actualSize != null
-        && (isNoMoreThanHalfFull() || actualSize <= (MAX_OVER_SIZE_MULTIPLE * requestedSize));
-  }
-
-  private boolean isNoMoreThanHalfFull() {
-    return currentSize == 0 || (maxSize / currentSize >= 2);
-  }
-
-  @Override
-  public synchronized void clearMemory() {
-    evictToSize(0);
-  }
-
-  @Override
-  public synchronized void trimMemory(int level) {
-    if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
-      clearMemory();
-    } else if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
-        || level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
-      evictToSize(maxSize / 2);
+    @Synchronized
+    override fun <T> get(size: Int, arrayClass: Class<T>): T? {
+        val possibleSize = getSizesForAdapter(arrayClass).ceilingKey(size)
+        val key: Key?
+        key = if (mayFillRequest(size, possibleSize)) {
+            keyPool[possibleSize, arrayClass]
+        } else {
+            keyPool[size, arrayClass]
+        }
+        return getForKey(key, arrayClass)
     }
-  }
 
-  private void evict() {
-    evictToSize(maxSize);
-  }
-
-  private void evictToSize(int size) {
-    while (currentSize > size) {
-      Object evicted = groupedMap.removeLast();
-      Preconditions.checkNotNull(evicted);
-      ArrayAdapterInterface<Object> arrayAdapter = getAdapterFromObject(evicted);
-      currentSize -= arrayAdapter.getArrayLength(evicted) * arrayAdapter.getElementSizeInBytes();
-      decrementArrayOfSize(arrayAdapter.getArrayLength(evicted), evicted.getClass());
-      if (Log.isLoggable(arrayAdapter.getTag(), Log.VERBOSE)) {
-        Log.v(arrayAdapter.getTag(), "evicted: " + arrayAdapter.getArrayLength(evicted));
-      }
+    private fun <T> getForKey(key: Key?, arrayClass: Class<T>): T? {
+        val arrayAdapter = getAdapterFromType(arrayClass)
+        var result: T? = getArrayForKey(key)
+        if (result != null) {
+            currentSize -= arrayAdapter.getArrayLength(result) * arrayAdapter.elementSizeInBytes
+            decrementArrayOfSize(arrayAdapter.getArrayLength(result), arrayClass)
+        }
+        if (result == null) {
+            if (Log.isLoggable(arrayAdapter.tag, Log.VERBOSE)) {
+                Log.v(arrayAdapter.tag, "Allocated " + key!!.size + " bytes")
+            }
+            result = arrayAdapter.newArray(key!!.size)
+        }
+        return result
     }
-  }
 
-  private void decrementArrayOfSize(int size, Class<?> arrayClass) {
-    NavigableMap<Integer, Integer> sizes = getSizesForAdapter(arrayClass);
-    Integer current = sizes.get(size);
-    if (current == null) {
-      throw new NullPointerException(
-          "Tried to decrement empty size" + ", size: " + size + ", this: " + this);
+    // Our cast is safe because the Key is based on the type.
+    private fun <T> getArrayForKey(key: Key?): T? {
+        return groupedMap[key] as T?
     }
-    if (current == 1) {
-      sizes.remove(size);
-    } else {
-      sizes.put(size, current - 1);
+
+    private fun isSmallEnoughForReuse(byteSize: Int): Boolean {
+        return byteSize <= maxSize / SINGLE_ARRAY_MAX_SIZE_DIVISOR
     }
-  }
 
-  private NavigableMap<Integer, Integer> getSizesForAdapter(Class<?> arrayClass) {
-    NavigableMap<Integer, Integer> sizes = sortedSizes.get(arrayClass);
-    if (sizes == null) {
-      sizes = new TreeMap<>();
-      sortedSizes.put(arrayClass, sizes);
+    private fun mayFillRequest(requestedSize: Int, actualSize: Int?): Boolean {
+        return (actualSize != null
+                && (isNoMoreThanHalfFull || actualSize <= 8 * requestedSize))
     }
-    return sizes;
-  }
 
-  @SuppressWarnings("unchecked")
-  private <T> ArrayAdapterInterface<T> getAdapterFromObject(T object) {
-    return (ArrayAdapterInterface<T>) getAdapterFromType(object.getClass());
-  }
+    private val isNoMoreThanHalfFull: Boolean
+        private get() = currentSize == 0 || maxSize / currentSize >= 2
 
-  @SuppressWarnings("unchecked")
-  private <T> ArrayAdapterInterface<T> getAdapterFromType(Class<T> arrayPoolClass) {
-    ArrayAdapterInterface<?> adapter = adapters.get(arrayPoolClass);
-    if (adapter == null) {
-      if (arrayPoolClass.equals(int[].class)) {
-        adapter = new IntegerArrayAdapter();
-      } else if (arrayPoolClass.equals(byte[].class)) {
-        adapter = new ByteArrayAdapter();
-      } else {
-        throw new IllegalArgumentException(
-            "No array pool found for: " + arrayPoolClass.getSimpleName());
-      }
-      adapters.put(arrayPoolClass, adapter);
+    @Synchronized
+    override fun clearMemory() {
+        evictToSize(0)
     }
-    return (ArrayAdapterInterface<T>) adapter;
-  }
 
-  // VisibleForTesting
-  int getCurrentSize() {
-    int currentSize = 0;
-    for (Class<?> type : sortedSizes.keySet()) {
-      for (Integer size : sortedSizes.get(type).keySet()) {
-        ArrayAdapterInterface<?> adapter = getAdapterFromType(type);
-        currentSize += size * sortedSizes.get(type).get(size) * adapter.getElementSizeInBytes();
-      }
+    @Synchronized
+    override fun trimMemory(level: Int) {
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
+            clearMemory()
+        } else if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
+            || level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
+        ) {
+            evictToSize(maxSize / 2)
+        }
     }
-    return currentSize;
-  }
 
-  private static final class KeyPool extends BaseKeyPool<Key> {
+    private fun evict() {
+        evictToSize(maxSize)
+    }
+
+    private fun evictToSize(size: Int) {
+        while (currentSize > size) {
+            val evicted = groupedMap.removeLast()
+            val arrayAdapter = getAdapterFromObject(evicted)
+            currentSize -= arrayAdapter.getArrayLength(evicted) * arrayAdapter.elementSizeInBytes
+            decrementArrayOfSize(arrayAdapter.getArrayLength(evicted), evicted!!.javaClass)
+            if (Log.isLoggable(arrayAdapter.tag, Log.VERBOSE)) {
+                Log.v(arrayAdapter.tag, "evicted: " + arrayAdapter.getArrayLength(evicted))
+            }
+        }
+    }
+
+    private fun decrementArrayOfSize(size: Int, arrayClass: Class<*>) {
+        val sizes = getSizesForAdapter(arrayClass)
+        val current = sizes[size]
+            ?: throw NullPointerException(
+                "Tried to decrement empty size, size: $size, this: $this"
+            )
+        if (current == 1) {
+            sizes.remove(size)
+        } else {
+            sizes[size] = current - 1
+        }
+    }
+
+    private fun getSizesForAdapter(arrayClass: Class<*>): NavigableMap<Int, Int> {
+        var sizes = sortedSizes[arrayClass]
+        if (sizes == null) {
+            sizes = TreeMap()
+            sortedSizes[arrayClass] = sizes
+        }
+        return sizes
+    }
+
+    private fun <T> getAdapterFromObject(`object`: T): ArrayAdapterInterface<T> {
+        return getAdapterFromType(`object`!!.javaClass) as ArrayAdapterInterface<T>
+    }
+
+    private fun <T> getAdapterFromType(arrayPoolClass: Class<T>): ArrayAdapterInterface<T> {
+        var adapter = adapters[arrayPoolClass]
+        if (adapter == null) {
+            adapter = when (arrayPoolClass) {
+                IntArray::class.java -> {
+                    IntegerArrayAdapter()
+                }
+                ByteArray::class.java -> {
+                    ByteArrayAdapter()
+                }
+                else -> {
+                    throw IllegalArgumentException("No array pool found for:$arrayPoolClass.simpleName")
+                }
+            }
+            adapters[arrayPoolClass] = adapter
+        }
+        return adapter as ArrayAdapterInterface<T>
+    }
+
+    // VisibleForTesting
+    fun getCurrentSize(): Int {
+        var currentSize = 0
+        for (type in sortedSizes.keys) {
+            for (size in sortedSizes[type]!!.keys) {
+                val adapter = getAdapterFromType(type)
+                currentSize += size * sortedSizes[type]!![size]!! * adapter.elementSizeInBytes
+            }
+        }
+        return currentSize
+    }
 
     @Synthetic
-    KeyPool() {}
+    private class KeyPool internal constructor() : BaseKeyPool<Key?>() {
+        operator fun get(size: Int, arrayClass: Class<*>?): Key? {
+            val result = get()
+            result!!.init(size, arrayClass)
+            return result
+        }
 
-    Key get(int size, Class<?> arrayClass) {
-      Key result = get();
-      result.init(size, arrayClass);
-      return result;
+        override fun create(): Key {
+            return Key(this)
+        }
     }
 
-    @Override
-    protected Key create() {
-      return new Key(this);
-    }
-  }
+    private class Key internal constructor(private val pool: KeyPool) : Poolable {
+        @Synthetic
+        var size = 0
+        private var arrayClass: Class<*>? = null
+        fun init(length: Int, arrayClass: Class<*>?) {
+            size = length
+            this.arrayClass = arrayClass
+        }
 
-  private static final class Key implements Poolable {
-    private final KeyPool pool;
-    @Synthetic int size;
-    private Class<?> arrayClass;
+        override fun equals(o: Any?): Boolean {
+            if (o is Key) {
+                val other = o
+                return size == other.size && arrayClass == other.arrayClass
+            }
+            return false
+        }
 
-    Key(KeyPool pool) {
-      this.pool = pool;
-    }
+        override fun toString(): String {
+            return "Key{" + "size=" + size + "array=" + arrayClass + '}'
+        }
 
-    void init(int length, Class<?> arrayClass) {
-      this.size = length;
-      this.arrayClass = arrayClass;
-    }
+        override fun offer() {
+            pool.offer(this)
+        }
 
-    @Override
-    public boolean equals(Object o) {
-      if (o instanceof Key) {
-        Key other = (Key) o;
-        return size == other.size && arrayClass == other.arrayClass;
-      }
-      return false;
-    }
-
-    @Override
-    public String toString() {
-      return "Key{" + "size=" + size + "array=" + arrayClass + '}';
+        override fun hashCode(): Int {
+            var result = size
+            result = 31 * result + if (arrayClass != null) arrayClass.hashCode() else 0
+            return result
+        }
     }
 
-    @Override
-    public void offer() {
-      pool.offer(this);
-    }
+    companion object {
 
-    @Override
-    public int hashCode() {
-      int result = size;
-      result = 31 * result + (arrayClass != null ? arrayClass.hashCode() : 0);
-      return result;
+        /**
+         * Used to calculate the maximum % of the total pool size a single byte array may consume.
+         */
+        private const val SINGLE_ARRAY_MAX_SIZE_DIVISOR = 2
     }
-  }
 }
